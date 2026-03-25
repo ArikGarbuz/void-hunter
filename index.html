@@ -360,30 +360,24 @@
   .dpad-btn:active { background: rgba(0,229,255,0.3); }
   .active-diff { background: rgba(0,229,255,0.15) !important; box-shadow: 0 0 20px var(--ship-glow); }
 
-  /* ── Mini-map ── */
-  #minimap {
-    position: absolute;
-    bottom: 14px;
-    right: 14px;
-    width: 80px;
-    height: 80px;
-    border: 1px solid rgba(0,229,255,0.2);
-    border-radius: 6px;
-    background: rgba(2,4,8,0.65);
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
-    pointer-events: none;
-    z-index: 10;
-    overflow: hidden;
+  /* ── Mini-map — no box, dots drawn directly on canvas ── */
+  #minimap { display: none; }
+
+  /* ── Mute button ── */
+  #muteBtn {
+    font-size: 14px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    pointer-events: all;
+    line-height: 1;
   }
-  #minimapCanvas { display: block; }
-  #minimapLabel {
-    position: absolute;
-    top: 3px; left: 5px;
-    font-size: 6px; letter-spacing: 2px;
-    color: rgba(0,229,255,0.3);
-    font-family: 'Share Tech Mono', monospace;
-  }
+  #muteBtn:hover { opacity: 1; }
 
   /* ── Danger Pulse ── */
   #dangerPulse {
@@ -553,6 +547,8 @@
     </div>
     <div class="hud-sep"></div>
     <div id="lives" class="hud-item"></div>
+    <div class="hud-sep"></div>
+    <button id="muteBtn" title="השתק">🔊</button>
   </div>
 
   <!-- Bet screen — shown between levels -->
@@ -930,7 +926,8 @@ function initWave() {
   lives = 5;   // full lives every level
   ship.x = canvas.width/2; ship.y = canvas.height/2;
   ship.vx = 0; ship.vy = 0;
-  ship.invincible = 120;
+  ship.invincible = 0;
+  ship.invincibleUntil = Date.now() + 2000;
   ship.dashTimer = 0; ship.dashCooldown = 0;
   updateUI();
   showLevelAnnounce();
@@ -978,9 +975,10 @@ let lastTap = 0; // for double-tap dash
 
 function triggerDash() {
   if (!ship || ship.dashCooldown > 0 || ship.dashTimer > 0) return;
-  ship.dashAngle = ship.angle; // dash in current heading
+  ship.dashAngle = ship.angle;
   ship.dashTimer = DASH_DURATION;
   ship.dashCooldown = DASH_COOLDOWN;
+  sfxDash();
   spawnParticles(ship.x, ship.y, '#ff9d00', 18);
   showPowerupMsg('⚡ DASH — פריצה!');
 }
@@ -1312,6 +1310,7 @@ function update() {
   if (shielded)    { shieldTimer--;  if (shieldTimer  <= 0) shielded    = false; }
   if (slowEnemies) { slowTimer--;    if (slowTimer     <= 0) slowEnemies = false; }
   if (ship.invincible > 0) ship.invincible--;
+  const isInvincible = ship.invincible > 0 || Date.now() < (ship.invincibleUntil || 0);
   if (ship.dashTimer   > 0) ship.dashTimer--;
   if (ship.dashCooldown > 0) ship.dashCooldown--;
 
@@ -1465,6 +1464,7 @@ function update() {
             e.chasing = false;
           });
           spawnParticles(p.x, p.y, '#00e5ff', 35);
+          sfxScatter();
           showPowerupMsg('💣 SCATTER — אויבים הותזו!');
           score += 50;
           coins += 10 * betMult;
@@ -1475,6 +1475,7 @@ function update() {
           const mult = Math.min(combo, 8);
           score += 10 * mult;
           coins += betMult;
+          sfxCoin(combo);
           spawnParticles(p.x, p.y, combo >= 4 ? '#b84fff' : '#ffe500', 5);
           updateComboDisplay();
         }
@@ -1488,10 +1489,12 @@ function update() {
       p.collected = true;
       if (p.type === 'shield') {
         shielded = true; shieldTimer = 300;
+        sfxShield();
         spawnParticles(p.x, p.y, '#b84fff', 20);
         showPowerupMsg('🛡️ מגן פעיל — 5 שניות');
       } else {
         slowEnemies = true; slowTimer = 240;
+        sfxSlow();
         spawnParticles(p.x, p.y, '#00ffa3', 20);
         showPowerupMsg('🐌 ורטקס — אויבים האטו!');
       }
@@ -1499,7 +1502,7 @@ function update() {
   });
 
   // ── Collision ─────────────────────────────────────────────────
-  if (ship.invincible <= 0) {
+  if (!isInvincible) {
     for (const e of enemies) {
       if (!e.alive) continue;
       if (Math.hypot(ship.x-e.x, ship.y-e.y) < SHIP_R + 12) {
@@ -1535,6 +1538,7 @@ function update() {
     const levelBonus = 50 * wave * betMult;
     score += 500 * wave;
     coins += levelBonus;
+    sfxLevelComplete();
     spawnParticles(ship.x, ship.y, '#00e5ff', 40);
     showPowerupMsg(`🪙 +${levelBonus} מטבעות!`);
     playWarpTransition(() => {
@@ -1551,6 +1555,7 @@ function update() {
 
 function loseLife() {
   lives--;
+  sfxHit();
   spawnParticles(ship.x, ship.y, '#ff3d6e', 40);
   if (lives <= 0) {
     gameOver();
@@ -1584,7 +1589,8 @@ function startRespawnCountdown() {
       clearInterval(tick);
       overlay.classList.remove('active');
       state = 'playing';
-      ship.invincible = 120;
+      ship.invincible = 0;
+      ship.invincibleUntil = Date.now() + 2000;
     } else {
       countEl.textContent = count;
       countEl.style.animation = 'none';
@@ -1596,6 +1602,7 @@ function startRespawnCountdown() {
 
 function gameOver() {
   state = 'over';
+  sfxGameOver();
   if (score > hi) { hi = score; safeSetHi(hi); }
   document.getElementById('finalScore').textContent = score;
   const diffLabels = { easy:'🟢 קל', normal:'🟡 בינוני', hard:'🔴 קשה' };
@@ -1625,7 +1632,7 @@ function showBetScreen() {
 
 function confirmBet() {
   betMult = selectedBet;
-  // Lives according to bet risk
+  sfxBet();
   const betLives = selectedBet === 1 ? 5 : selectedBet === 2 ? 3 : 1;
   document.getElementById('betScreen').classList.add('hidden');
   state = 'playing';
@@ -1646,7 +1653,8 @@ function initWaveWithLives(startLives) {
   lives = startLives;
   ship.x = canvas.width/2; ship.y = canvas.height/2;
   ship.vx = 0; ship.vy = 0;
-  ship.invincible = 120;
+  ship.invincible = 0;
+  ship.invincibleUntil = Date.now() + 2000; // 2s real-time protection
   ship.dashTimer = 0; ship.dashCooldown = 0;
   updateUI();
   showLevelAnnounce();
@@ -1682,61 +1690,50 @@ function updateComboDisplay() {
 }
 
 // ── Minimap ───────────────────────────────────────────────────
-const mmCanvas = document.getElementById('minimapCanvas');
-const mmCtx = mmCanvas.getContext('2d');
-const MM_W = 80, MM_H = 80;
+// Mini-map drawn directly on main canvas — no box
+const MM_W = 90, MM_H = 90;
+const MM_X = canvas.width - MM_W - 12; // right edge
+const MM_Y = canvas.height - MM_H - 12; // bottom edge
 
 function drawMinimap() {
   if (!ship || state !== 'playing') return;
-  mmCtx.clearRect(0, 0, MM_W, MM_H);
-
-  // Background
-  mmCtx.fillStyle = 'rgba(2,8,16,0.8)';
-  mmCtx.fillRect(0, 0, MM_W, MM_H);
 
   const scaleX = MM_W / canvas.width;
   const scaleY = MM_H / canvas.height;
+  const ox = canvas.width  - MM_W - 12;
+  const oy = canvas.height - MM_H - 12;
 
-  // Pellets (tiny dots)
+  ctx.save();
+
+  // Pellets — tiny dots, very subtle
   pellets.forEach(p => {
     if (p.collected) return;
-    mmCtx.beginPath();
-    mmCtx.arc(p.x * scaleX, p.y * scaleY, p.type === 'scatter' ? 3 : 1, 0, Math.PI*2);
-    mmCtx.fillStyle = p.type === 'scatter' ? '#00e5ff' : 'rgba(255,229,0,0.5)';
-    mmCtx.fill();
+    ctx.beginPath();
+    ctx.arc(ox + p.x * scaleX, oy + p.y * scaleY, p.type === 'scatter' ? 2.5 : 1, 0, Math.PI*2);
+    ctx.fillStyle = p.type === 'scatter' ? 'rgba(0,229,255,0.5)' : 'rgba(255,215,0,0.35)';
+    ctx.fill();
   });
 
-  // Asteroids
-  asteroids.forEach(a => {
-    mmCtx.beginPath();
-    mmCtx.arc(a.x * scaleX, a.y * scaleY, Math.max(2, a.r * scaleX * 0.8), 0, Math.PI*2);
-    mmCtx.fillStyle = 'rgba(139,111,71,0.5)';
-    mmCtx.fill();
-  });
-
-  // Enemies
+  // Enemies — colored dots
   enemies.forEach(e => {
     if (!e.alive) return;
-    mmCtx.beginPath();
-    mmCtx.arc(e.x * scaleX, e.y * scaleY, 3, 0, Math.PI*2);
-    mmCtx.fillStyle = e.chasing ? '#ff3d6e' : 'rgba(255,100,50,0.5)';
-    mmCtx.fill();
+    ctx.beginPath();
+    ctx.arc(ox + e.x * scaleX, oy + e.y * scaleY, 2.5, 0, Math.PI*2);
+    ctx.fillStyle = e.chasing ? 'rgba(255,61,110,0.8)' : 'rgba(255,100,50,0.4)';
+    ctx.fill();
   });
 
-  // Ship (pulsing dot)
-  const pulse = 0.7 + 0.3 * Math.sin(t * 0.1);
-  mmCtx.beginPath();
-  mmCtx.arc(ship.x * scaleX, ship.y * scaleY, 4, 0, Math.PI*2);
-  mmCtx.fillStyle = `rgba(0,229,255,${pulse})`;
-  mmCtx.shadowColor = '#00e5ff';
-  mmCtx.shadowBlur = 6;
-  mmCtx.fill();
-  mmCtx.shadowBlur = 0;
+  // Ship — bright pulsing dot
+  const pulse = 0.6 + 0.4 * Math.sin(t * 0.1);
+  ctx.beginPath();
+  ctx.arc(ox + ship.x * scaleX, oy + ship.y * scaleY, 3.5, 0, Math.PI*2);
+  ctx.fillStyle = `rgba(0,229,255,${pulse})`;
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 8;
+  ctx.fill();
+  ctx.shadowBlur = 0;
 
-  // Border scan line
-  mmCtx.strokeStyle = 'rgba(0,229,255,0.15)';
-  mmCtx.lineWidth = 1;
-  mmCtx.strokeRect(0, 0, MM_W, MM_H);
+  ctx.restore();
 }
 
 // ── Draw ──────────────────────────────────────────────────────
@@ -1796,7 +1793,8 @@ function draw() {
   });
 
   // Ship (flicker if invincible)
-  if (ship.invincible <= 0 || Math.floor(t/5)%2 === 0) {
+  const isInvincibleDraw = ship.invincible > 0 || Date.now() < (ship.invincibleUntil || 0);
+  if (!isInvincibleDraw || Math.floor(t/5)%2 === 0) {
     const thrusting = pointer.active || !!(keys['ArrowUp'] || keys['w'] || keys['ArrowDown'] || keys['s'] ||
                          keys['ArrowLeft'] || keys['a'] || keys['ArrowRight'] || keys['d']);
     drawShip(ship.x, ship.y, ship.angle, thrusting);
@@ -1895,7 +1893,145 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// ── Boot ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// SOUND ENGINE — Web Audio API, zero dependencies
+// Inspired by casino + Sonic SFX
+// ══════════════════════════════════════════════════════════════
+let audioCtx = null;
+let muted = false;
+
+function getAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+// Resume audio on first touch (iOS requirement)
+document.addEventListener('touchstart', () => getAudio(), { once: true, passive: true });
+document.addEventListener('click',      () => getAudio(), { once: true, passive: true });
+
+function playTone(freq, type, duration, vol, startFreq) {
+  if (muted) return;
+  const ac = getAudio(); if (!ac) return;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.type = type || 'sine';
+  const now = ac.currentTime;
+  if (startFreq) {
+    osc.frequency.setValueAtTime(startFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(freq, now + duration * 0.5);
+  } else {
+    osc.frequency.setValueAtTime(freq, now);
+  }
+  gain.gain.setValueAtTime(vol || 0.18, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  osc.start(now);
+  osc.stop(now + duration + 0.01);
+}
+
+function playNoise(duration, vol) {
+  if (muted) return;
+  const ac = getAudio(); if (!ac) return;
+  const buf = ac.createBuffer(1, ac.sampleRate * duration, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  const gain = ac.createGain();
+  const filter = ac.createBiquadFilter();
+  filter.type = 'bandpass'; filter.frequency.value = 400;
+  src.buffer = buf;
+  src.connect(filter); filter.connect(gain); gain.connect(ac.destination);
+  const now = ac.currentTime;
+  gain.gain.setValueAtTime(vol || 0.15, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  src.start(now); src.stop(now + duration + 0.01);
+}
+
+// ── Sound effects ─────────────────────────────────────────────
+
+// 🪙 Coin collect — Sonic ring ding (ascending blip)
+function sfxCoin(comboCount) {
+  const baseFreq = 880 + Math.min(comboCount, 8) * 120;
+  playTone(baseFreq, 'sine', 0.12, 0.15);
+  setTimeout(() => playTone(baseFreq * 1.5, 'sine', 0.08, 0.1), 60);
+}
+
+// 💣 Scatter — casino jackpot sweep
+function sfxScatter() {
+  const ac = getAudio(); if (!ac) return;
+  [0, 60, 120, 180, 240].forEach((delay, i) => {
+    setTimeout(() => playTone(300 + i * 200, 'square', 0.15, 0.12), delay);
+  });
+  setTimeout(() => playTone(1400, 'sine', 0.4, 0.2), 320);
+}
+
+// 🚀 Dash — whoosh
+function sfxDash() {
+  const ac = getAudio(); if (!ac) return;
+  playTone(200, 'sawtooth', 0.25, 0.13, 800);
+  playNoise(0.15, 0.08);
+}
+
+// 💥 Hit — casino "lose" descending buzz
+function sfxHit() {
+  const ac = getAudio(); if (!ac) return;
+  // Descending wail
+  [440, 370, 280, 200].forEach((f, i) => {
+    setTimeout(() => playTone(f, 'sawtooth', 0.18, 0.16), i * 60);
+  });
+  // Low thump underneath
+  setTimeout(() => playTone(55, 'sine', 0.35, 0.22), 0);
+  // Short noise burst
+  setTimeout(() => playNoise(0.12, 0.12), 20);
+}
+
+// 🛡️ Shield pickup — casino chime
+function sfxShield() {
+  [523, 659, 784, 1047].forEach((f, i) => {
+    setTimeout(() => playTone(f, 'sine', 0.2, 0.12), i * 80);
+  });
+}
+
+// 🐌 Slow — descending wobble
+function sfxSlow() {
+  playTone(400, 'sine', 0.5, 0.12, 800);
+}
+
+// ⭐ Level complete — Sonic clear fanfare
+function sfxLevelComplete() {
+  const ac = getAudio(); if (!ac) return;
+  const notes = [523, 659, 784, 1047, 1319, 1047, 1319, 1568];
+  notes.forEach((f, i) => {
+    setTimeout(() => playTone(f, 'sine', 0.18, 0.15), i * 100);
+  });
+}
+
+// 💀 Game over — descending casino tone
+function sfxGameOver() {
+  [440, 370, 311, 261].forEach((f, i) => {
+    setTimeout(() => playTone(f, 'sawtooth', 0.35, 0.18), i * 180);
+  });
+}
+
+// 🎰 Bet confirm — slot machine pull
+function sfxBet() {
+  playTone(220, 'square', 0.1, 0.1);
+  setTimeout(() => playTone(330, 'square', 0.1, 0.1), 80);
+  setTimeout(() => playTone(440, 'square', 0.15, 0.12), 160);
+}
+
+// ── Mute ─────────────────────────────────────────────────────
+function toggleMute() {
+  muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+}
+document.getElementById('muteBtn').addEventListener('click', toggleMute);
+document.getElementById('muteBtn').addEventListener('touchend', (e) => {
+  e.preventDefault(); toggleMute();
+}, { passive: false });
 initStars();
 ship = { x: canvas.width/2, y: canvas.height/2, angle: -Math.PI/2, vx:0,vy:0, trail:[], invincible:0 };
 pellets = []; enemies = []; asteroids = []; powerups = []; particles = [];
